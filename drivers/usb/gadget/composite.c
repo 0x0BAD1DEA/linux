@@ -386,7 +386,7 @@ int usb_function_activate(struct usb_function *function)
 		if (cdev->deactivations == 0) {
 			spin_unlock_irqrestore(&cdev->lock, flags);
 			status = usb_gadget_activate(cdev->gadget);
-			spin_unlock_irqsave(&cdev->lock, flags);
+			spin_lock_irqsave(&cdev->lock, flags);
 		}
 	}
 
