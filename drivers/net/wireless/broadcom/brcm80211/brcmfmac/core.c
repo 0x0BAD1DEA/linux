@@ -937,6 +937,17 @@ int brcmf_fwlog_attach(struct device *dev)
 	return brcmf_debug_fwlog_init(drvr);
 }
 
+static ssize_t chipname_show(struct device *dev, struct device_attribute *attr,
+			     char *buf)
+{
+	struct brcmf_bus *bus_if = dev_get_drvdata(dev->parent);
+	struct brcmf_pub *drvr = bus_if->drvr;
+	struct brcmf_rev_info *ri = &drvr->revinfo;
+
+	return snprintf(buf, PAGE_SIZE, "%s\n", ri->chipname);
+}
+static DEVICE_ATTR_RO(chipname);
+
 static int brcmf_revinfo_read(struct seq_file *s, void *data)
 {
 	struct brcmf_bus *bus_if = dev_get_drvdata(s->private);
@@ -947,8 +958,7 @@ static int brcmf_revinfo_read(struct seq_file *s, void *data)
 	seq_printf(s, "vendorid: 0x%04x\n", ri->vendorid);
 	seq_printf(s, "deviceid: 0x%04x\n", ri->deviceid);
 	seq_printf(s, "radiorev: %s\n", brcmu_dotrev_str(ri->radiorev, drev));
-	seq_printf(s, "chipnum: %u (%x)\n", ri->chipnum, ri->chipnum);
-	seq_printf(s, "chiprev: %u\n", ri->chiprev);
+	seq_printf(s, "chip: %s\n", ri->chipname);
 	seq_printf(s, "chippkg: %u\n", ri->chippkg);
 	seq_printf(s, "corerev: %u\n", ri->corerev);
 	seq_printf(s, "boardid: 0x%04x\n", ri->boardid);
@@ -994,13 +1004,6 @@ int brcmf_bus_started(struct device *dev)
 
 	brcmf_debugfs_add_entry(drvr, "revinfo", brcmf_revinfo_read);
 
-	/* assure we have chipid before feature attach */
-	if (!bus_if->chip) {
-		bus_if->chip = drvr->revinfo.chipnum;
-		bus_if->chiprev = drvr->revinfo.chiprev;
-		brcmf_dbg(INFO, "firmware revinfo: chip %x (%d) rev %d\n",
-			  bus_if->chip, bus_if->chip, bus_if->chiprev);
-	}
 	brcmf_feat_attach(drvr);
 
 	ret = brcmf_proto_init_done(drvr);
@@ -1042,6 +1045,13 @@ int brcmf_bus_started(struct device *dev)
 	}
 #endif
 #endif /* CONFIG_INET */
+
+	/* Create sysfs file to get chip name */
+	ret = device_create_file(&drvr->config->wiphy->dev, &dev_attr_chipname);
+	if (ret) {
+		brcmf_err("failed to create sysfs file chipname");
+		goto fail;
+	}
 
 	return 0;
 
@@ -1094,6 +1104,8 @@ void brcmf_detach(struct device *dev)
 
 	if (drvr == NULL)
 		return;
+
+	device_remove_file(&drvr->config->wiphy->dev, &dev_attr_chipname);
 
 #ifdef CONFIG_INET
 	unregister_inetaddr_notifier(&drvr->inetaddr_notifier);
