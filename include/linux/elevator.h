@@ -120,6 +120,8 @@ extern void elv_merged_request(struct request_queue *, struct request *,
 extern bool elv_attempt_insert_merge(struct request_queue *, struct request *);
 extern struct request *elv_former_request(struct request_queue *, struct request *);
 extern struct request *elv_latter_request(struct request_queue *, struct request *);
+extern int elv_register_queue(struct request_queue *, bool);
+extern void elv_unregister_queue(struct request_queue *);
 
 /*
  * io scheduler registration

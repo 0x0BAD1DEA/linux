@@ -507,6 +507,7 @@ int elv_register_queue(struct request_queue *q, bool uevent)
 	}
 	return error;
 }
+EXPORT_SYMBOL(elv_register_queue);
 
 /*
  * elv_unregister_queue is called from either blk_unregister_queue or
@@ -526,6 +527,7 @@ void elv_unregister_queue(struct request_queue *q)
 		wbt_enable_default(q);
 	}
 }
+EXPORT_SYMBOL(elv_unregister_queue);
 
 int elv_register(struct elevator_type *e)
 {
