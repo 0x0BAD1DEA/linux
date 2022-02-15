@@ -24,13 +24,13 @@
 
 static int get_vcom_voltage_op(struct regulator_dev *rdev)
 {
-	int ret;
+	int ret, vcom;
 
-	ret = get_vcom_voltage_mv(rdev->regmap);
-	if (ret < 0)
+	ret = get_vcom_voltage(rdev->regmap, &vcom);
+	if (ret)
 		return ret;
 
-	return ret * 1000;
+	return -vcom;
 }
 
 static int disable_regulator(struct regulator_dev *rdev)
@@ -113,13 +113,14 @@ static int sy7636a_regulator_init(struct sy7636a *sy7636a)
 
 static int sy7636a_regulator_suspend(struct device *dev)
 {
-	int ret;
+	int ret, vcom;
 	struct sy7636a *sy7636a = dev_get_drvdata(dev->parent);
 
-	ret = get_vcom_voltage_mv(sy7636a->regmap);
-	if (ret > 0)
-		sy7636a->vcom = (unsigned int)ret;
+	ret = get_vcom_voltage(sy7636a->regmap, &vcom);
+	if (ret)
+		return ret;
 
+	sy7636a->vcom = vcom;
 	return 0;
 }
 
@@ -129,11 +130,11 @@ static int sy7636a_regulator_resume(struct device *dev)
 
 	struct sy7636a *sy7636a = dev_get_drvdata(dev->parent);
 
-	if (!sy7636a->vcom || sy7636a->vcom > 5000) {
+	if (sy7636a->vcom < SY7636A_REG_VCOM_MIN || sy7636a->vcom > SY7636A_REG_VCOM_MAX) {
 		dev_warn(dev, "Vcom value invalid, and thus not restored\n");
 	}
 	else {
-		ret = set_vcom_voltage_mv(sy7636a->regmap, sy7636a->vcom);
+		ret = set_vcom_voltage(sy7636a->regmap, sy7636a->vcom);
 		if (ret)
 			return ret;
 	}

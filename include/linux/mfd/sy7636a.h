@@ -26,23 +26,28 @@
 #define SY7636A_OPERATION_MODE_CRL_ONOFF (1 << 7)
 #define SY7636A_REG_VCOM_ADJUST_CTRL_L 0x01
 #define SY7636A_REG_VCOM_ADJUST_CTRL_H 0x02
-#define SY7636A_REG_VCOM_ADJUST_CTRL_MASK 0x01ff
 #define SY7636A_REG_VLDO_VOLTAGE_ADJULST_CTRL 0x03
 #define SY7636A_REG_POWER_ON_DELAY_TIME 0x06
 #define SY7636A_REG_FAULT_FLAG 0x07
 #define SY7636A_FAULT_FLAG_PG (1 << 0)
 #define SY7636A_REG_TERMISTOR_READOUT 0x08
 
+#define SY7636A_REG_VCOM_ADJUST_CTRL_MASK 0x01ff
+#define SY7636A_REG_VCOM_ADJUST_CTRL_SHIFT 8
+#define SY7636A_REG_VCOM_ADJUST_CTRL_SCAL 10000
+#define SY7636A_REG_VCOM_MIN -2500000
+#define SY7636A_REG_VCOM_MAX 0
+
 #define SY7636A_REG_MAX 0x08
 
 struct sy7636a {
 	struct device *dev;
 	struct regmap *regmap;
-	unsigned int vcom;
+	int vcom;
 	struct gpio_desc *pgood_gpio;
 };
 
-int get_vcom_voltage_mv(struct regmap *regmap);
-int set_vcom_voltage_mv(struct regmap *regmap, unsigned int vcom);
+int get_vcom_voltage(struct regmap *regmap, int *vcom);
+int set_vcom_voltage(struct regmap *regmap, int vcom);
 
 #endif /* __LINUX_MFD_SY7636A_H */

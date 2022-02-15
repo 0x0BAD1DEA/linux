@@ -26,6 +26,10 @@
 
 #include <linux/mfd/sy7636a.h>
 
+static int vcom_cache = 0;
+static int vcom_adj = 0;
+module_param(vcom_adj, int, 0644);
+
 static const struct regmap_config sy7636a_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
@@ -62,10 +66,11 @@ static const char *states[] = {
 	"Thermal shutdown",
 };
 
-int get_vcom_voltage_mv(struct regmap *regmap)
+int get_vcom_voltage(struct regmap *regmap, int *vcom)
 {
 	int ret;
 	unsigned int val, val_h;
+	int vcom_cur;
 
 	ret = regmap_read(regmap, SY7636A_REG_VCOM_ADJUST_CTRL_L, &val);
 	if (ret)
@@ -75,34 +80,49 @@ int get_vcom_voltage_mv(struct regmap *regmap)
 	if (ret)
 		return ret;
 
-	val |= (val_h << 1);
+	val |= (val_h << 8);
+    
+	vcom_cur = -(val & SY7636A_REG_VCOM_ADJUST_CTRL_MASK) * SY7636A_REG_VCOM_ADJUST_CTRL_SCAL;
 
-	return (val & 0x1FF) * 10;
+	if (vcom_cur != vcom_cache) {
+		if (set_vcom_voltage(regmap, vcom_cur) != 0) {
+			set_vcom_voltage(regmap, -vcom_adj);
+		}
+	}
+	if (vcom) {
+		*vcom = vcom_cache;
+    }
+
+	return 0;
 }
 
-int set_vcom_voltage_mv(struct regmap *regmap, unsigned int vcom)
+int set_vcom_voltage(struct regmap *regmap, int vcom)
 {
 	int ret;
 	unsigned int val;
 
-	if (vcom < 0 || vcom > 5000)
+	if ((vcom_cache != vcom) && !((vcom+vcom_adj) < SY7636A_REG_VCOM_MIN || (vcom+vcom_adj) > SY7636A_REG_VCOM_MAX)) {
+		vcom = vcom + vcom_adj;
+		vcom_cache = vcom;
+	}
+
+	if (vcom < SY7636A_REG_VCOM_MIN || vcom > SY7636A_REG_VCOM_MAX)
 		return -EINVAL;
 
-	val = (unsigned int)(vcom / 10) & 0x1ff;
+	val = (unsigned int)((-vcom) / SY7636A_REG_VCOM_ADJUST_CTRL_SCAL) & SY7636A_REG_VCOM_ADJUST_CTRL_MASK;
 
-	ret = regmap_write(regmap, SY7636A_REG_VCOM_ADJUST_CTRL_L, val);
+	ret = regmap_write(regmap, SY7636A_REG_VCOM_ADJUST_CTRL_L, val & 0xFF);
 	if (ret)
 		return ret;
 
-	ret = regmap_write(regmap, SY7636A_REG_VCOM_ADJUST_CTRL_H, (val >> 1) & 0x80);
+	ret = regmap_write(regmap, SY7636A_REG_VCOM_ADJUST_CTRL_H, (val >> 8) & 0x01);
 	if (ret)
 		return ret;
 
 	return 0;
 }
 
-static ssize_t state_show(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t state_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int ret;
 	unsigned int val;
@@ -125,8 +145,7 @@ static ssize_t state_show(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR(state, S_IRUGO, state_show, NULL);
 
-static ssize_t powergood_show(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t powergood_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int ret;
 	unsigned int val;
@@ -144,21 +163,19 @@ static ssize_t powergood_show(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR(power_good, S_IRUGO, powergood_show, NULL);
 
-static ssize_t vcom_show(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t vcom_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	int ret;
+	int ret, vcom;
 	struct sy7636a *sy7636a = dev_get_drvdata(dev);
 
-	ret = get_vcom_voltage_mv(sy7636a->regmap);
-	if (ret < 0)
-		return ret;
+	ret = get_vcom_voltage(sy7636a->regmap, &vcom);
+	if (ret)
+		return -ret;
 
-	return snprintf(buf, PAGE_SIZE, "%d\n", -ret);
+	return snprintf(buf, PAGE_SIZE, "%d\n", vcom);
 }
 
-static ssize_t vcom_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t vcom_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
 	int ret;
 	int vcom;
@@ -168,10 +185,10 @@ static ssize_t vcom_store(struct device *dev,
 	if (ret)
 		return ret;
 
-	if (vcom > 0 || vcom < -5000)
+	if (vcom < SY7636A_REG_VCOM_MIN || vcom > SY7636A_REG_VCOM_MAX)
 		return -EINVAL;
 
-	ret = set_vcom_voltage_mv(sy7636a->regmap, (unsigned int)(-vcom));
+	ret = set_vcom_voltage(sy7636a->regmap, vcom);
 	if (ret)
 		return ret;
 
