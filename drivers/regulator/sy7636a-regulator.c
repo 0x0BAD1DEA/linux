@@ -18,22 +18,21 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
-#include <linux/gpio/consumer.h>
 
 #include <linux/mfd/sy7636a.h>
 
-static int get_vcom_voltage_op(struct regulator_dev *rdev)
+static int sy7636a_regulator_get_voltage(struct regulator_dev *rdev)
 {
 	int ret, vcom;
 
-	ret = get_vcom_voltage(rdev->regmap, &vcom);
+	ret = sy7636a_get_vcom_voltage(rdev->regmap, &vcom);
 	if (ret)
 		return ret;
 
 	return -vcom;
 }
 
-static int disable_regulator(struct regulator_dev *rdev)
+static int sy7636a_regulator_disable(struct regulator_dev *rdev)
 {
 	int ret;
 
@@ -43,128 +42,55 @@ static int disable_regulator(struct regulator_dev *rdev)
 	return ret;
 }
 
-static int enable_regulator_pgood(struct regulator_dev *rdev)
+static int sy7636a_regulator_enable(struct regulator_dev *rdev)
 {
 	struct sy7636a *sy7636a = dev_get_drvdata(rdev->dev.parent);
-	int pwr_good = 0;
-	int ret;
-	unsigned long t0, t1;
-	const unsigned int wait_time = 500;
-	unsigned int wait_cnt;
-
-	t0 = jiffies;
 
 	ret = regulator_enable_regmap(rdev);
 	if (ret)
 		return ret;
 
-	for (wait_cnt = 0; wait_cnt < wait_time; wait_cnt++) {
-		pwr_good = gpiod_get_value_cansleep(sy7636a->pgood_gpio);
-		if (pwr_good < 0) {
-			dev_err(&rdev->dev, "Failed to read pgood gpio: %d\n", pwr_good);
-			return pwr_good;
-		}
-		else if (pwr_good)
-			break;
+	ret = sy7636a_get_powergood(rdev->dev.parent);
+	if (ret)
+		return ret;
 
-		usleep_range(1000, 1500);
-	}
-
-	t1 = jiffies;
-
-	if (!pwr_good) {
-		dev_err(&rdev->dev, "Power good signal timeout after %u ms\n",
-				jiffies_to_msecs(t1 - t0));
-		return -ETIME;
-	}
-
-	dev_dbg(&rdev->dev, "Power good OK (took %u ms, %u waits)\n",
-		jiffies_to_msecs(t1 - t0),
-		wait_cnt);
-
-	return ret;
+	return 0;
 }
 
-static const struct regulator_ops sy7636a_vcom_volt_ops = {
-	.get_voltage = get_vcom_voltage_op,
-	.enable = enable_regulator_pgood,
-	.disable = disable_regulator,
-	.is_enabled = regulator_is_enabled_regmap,
-};
-
-struct regulator_desc desc = {
-	.name = "vcom",
-	.id = 0,
-	.ops = &sy7636a_vcom_volt_ops,
-	.type = REGULATOR_VOLTAGE,
-	.owner = THIS_MODULE,
-	.enable_reg = SY7636A_REG_OPERATION_MODE_CRL,
-	.enable_mask = SY7636A_OPERATION_MODE_CRL_ONOFF,
-	.regulators_node = of_match_ptr("regulators"),
-	.of_match = of_match_ptr("vcom"),
-};
-
-static int sy7636a_regulator_init(struct sy7636a *sy7636a)
+static int sy7636a_regulator_init(struct device *dev)
 {
-	return regmap_write(sy7636a->regmap,
-				SY7636A_REG_POWER_ON_DELAY_TIME,
-				0x0);
+	struct sy7636a *sy7636a = dev_get_drvdata(dev->parent);
+
+	return regmap_write(sy7636a->regmap, SY7636A_REG_POWER_ON_DELAY_TIME, 0x00);
 }
 
 static int sy7636a_regulator_suspend(struct device *dev)
 {
-	int ret, vcom;
-	struct sy7636a *sy7636a = dev_get_drvdata(dev->parent);
-
-	ret = get_vcom_voltage(sy7636a->regmap, &vcom);
-	if (ret)
-		return ret;
-
-	sy7636a->vcom = vcom;
-	return 0;
+	return sy7636a_vcom_suspend(dev);
 }
 
 static int sy7636a_regulator_resume(struct device *dev)
 {
 	int ret;
 
-	struct sy7636a *sy7636a = dev_get_drvdata(dev->parent);
+	ret = sy7636a_vcom_resume(dev);
+	if (ret)
+		return ret;
 
-	if (sy7636a->vcom < SY7636A_REG_VCOM_MIN || sy7636a->vcom > SY7636A_REG_VCOM_MAX) {
-		dev_warn(dev, "Vcom value invalid, and thus not restored\n");
-	}
-	else {
-		ret = set_vcom_voltage(sy7636a->regmap, sy7636a->vcom);
-		if (ret)
-			return ret;
-	}
-
-	return sy7636a_regulator_init(sy7636a);
+	return sy7636a_regulator_init(dev);
 }
 
 static int sy7636a_regulator_probe(struct platform_device *pdev)
 {
+	int ret;
 	struct sy7636a *sy7636a = dev_get_drvdata(pdev->dev.parent);
 	struct regulator_config config = { };
 	struct regulator_dev *rdev;
-	struct gpio_desc *gdp;
-	int ret;
 
 	if (!sy7636a)
 		return -EPROBE_DEFER;
 
 	platform_set_drvdata(pdev, sy7636a);
-
-	gdp = devm_gpiod_get(sy7636a->dev, "epd-pwr-good", GPIOD_IN);
-	if (IS_ERR(gdp)) {
-		dev_err(sy7636a->dev, "Power good GPIO fault %ld\n", PTR_ERR(gdp));
-		return PTR_ERR(gdp);
-	}
-
-	sy7636a->pgood_gpio = gdp;
-	dev_info(sy7636a->dev,
-		"Power good GPIO registered (gpio# %d)\n",
-		desc_to_gpio(sy7636a->pgood_gpio));
 
 	ret = sy7636a_regulator_init(sy7636a);
 	if (ret) {
@@ -179,13 +105,31 @@ static int sy7636a_regulator_probe(struct platform_device *pdev)
 
 	rdev = devm_regulator_register(&pdev->dev, &desc, &config);
 	if (IS_ERR(rdev)) {
-		dev_err(sy7636a->dev, "Failed to register %s regulator\n",
-			pdev->name);
+		dev_err(sy7636a->dev, "Failed to register %s regulator\n", pdev->name);
 		return PTR_ERR(rdev);
 	}
 
 	return 0;
 }
+
+static const struct regulator_ops sy7636a_vcom_volt_ops = {
+	.get_voltage = sy7636a_regulator_get_voltage,
+	.enable = sy7636a_regulator_enable,
+	.disable = sy7636a_regulator_disable,
+	.is_enabled = regulator_is_enabled_regmap,
+};
+
+struct regulator_desc desc = {
+	.name = "vcom",
+	.id = 0,
+	.ops = &sy7636a_vcom_volt_ops,
+	.type = REGULATOR_VOLTAGE,
+	.owner = THIS_MODULE,
+	.enable_reg = SY7636A_REG_OPERATION_MODE_CRL,
+	.enable_mask = SY7636A_OPERATION_MODE_CRL_ONOFF,
+	.regulators_node = of_match_ptr("regulators"),
+	.of_match = of_match_ptr("vcom"),
+};
 
 static const struct platform_device_id sy7636a_regulator_id_table[] = {
 	{ "sy7636a-regulator", },
