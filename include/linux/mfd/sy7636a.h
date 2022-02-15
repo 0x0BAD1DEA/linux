@@ -45,9 +45,13 @@ struct sy7636a {
 	struct regmap *regmap;
 	int vcom;
 	struct gpio_desc *pgood_gpio;
+    char suspended;
 };
 
-int get_vcom_voltage(struct regmap *regmap, int *vcom);
-int set_vcom_voltage(struct regmap *regmap, int vcom);
+int sy7636a_get_vcom_voltage(struct device *dev, int *val);
+int sy7636a_set_vcom_voltage(struct device *dev, int val);
+int sy7636a_get_vcom_pgood(struct device *dev);
+int sy7636a_vcom_suspend(struct device *dev);
+int sy7636a_vcom_resume(struct device *dev);
 
 #endif /* __LINUX_MFD_SY7636A_H */
