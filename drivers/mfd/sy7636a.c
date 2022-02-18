@@ -125,7 +125,9 @@ int sy7636a_vcom_set_voltage(struct device *dev, int value)
 		return -EINVAL;
     }
 
-	sy7636a->vcom = value;
+	if (sy7636a->suspended != 1) {
+		sy7636a->vcom = value;
+	}
 
 	rval = (unsigned int)((-value) / SY7636A_REG_VCOM_ADJUST_CTRL_SCAL) & SY7636A_REG_VCOM_ADJUST_CTRL_MASK;
 
@@ -174,31 +176,37 @@ int sy7636a_vcom_suspend(struct device *dev) {
 	int ret;
 	struct sy7636a *sy7636a = dev_get_drvdata(dev);
 
-	ret = sy7636a_vcom_get_voltage(dev, NULL);
-	if (ret)
-		return ret;
+	if (!sy7636a->suspended) {
+		dev_info(sy7636a->dev, "SY7636a: suspending.\n");
+		ret = sy7636a_vcom_get_voltage(dev, NULL);
+		if (ret)
+			return ret;
 
-	sy7636a->suspended = 1;
+		sy7636a->suspended = 1;
 
-	ret = sy7636a_vcom_set_voltage(dev, 0x00); // FIXME: Get the datasheet to find out how to properly suspend the entire device.
-	if (ret)
-		return ret;
-
+		ret = sy7636a_vcom_set_voltage(dev, 0x00); // FIXME: Get the datasheet to find out how to properly suspend the entire device.
+		if (ret)
+			return ret;
+	}
+    
 	return 0;
 }
 int sy7636a_vcom_resume(struct device *dev) {
 	int ret;
 	struct sy7636a *sy7636a = dev_get_drvdata(dev);
     
-	ret = sy7636a_vcom_set_voltage(dev, sy7636a->vcom);
-	if (ret)
-		return ret;
+	if (sy7636a->suspended) {
+		dev_info(sy7636a->dev, "SY7636a: resuming.\n");
+		ret = sy7636a_vcom_set_voltage(dev, sy7636a->vcom);
+		if (ret)
+			return ret;
 
-	sy7636a->suspended = 0;
+		sy7636a->suspended = 0;
 
-	ret = sy7636a_vcom_init(sy7636a);
-	if (ret)
-		return ret;
+		ret = sy7636a_vcom_init(sy7636a);
+		if (ret)
+			return ret;
+	}
 
 	return 0;
 }
@@ -246,6 +254,23 @@ static ssize_t powergood_show(struct device *dev, struct device_attribute *attr,
 	return snprintf(buf, PAGE_SIZE, "%s\n", pgood[val]);
 }
 static DEVICE_ATTR(power_good, S_IRUGO, powergood_show, NULL);
+
+static ssize_t regs_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int ret, reg;
+	unsigned int val[SY7636A_REG_MAX+1];
+	struct sy7636a *sy7636a = dev_get_drvdata(dev);
+
+	for (reg = 0; reg <= SY7636A_REG_MAX; reg+=1) {
+		ret = regmap_read(sy7636a->regmap, reg, &val[reg]);
+		if (ret)
+			dev_err(sy7636a->dev, "Failed to read from device\n");
+		snprintf(buf, PAGE_SIZE, "%s %02x", buf, val[reg]);
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%s\n", buf);
+}
+static DEVICE_ATTR(regs, S_IRUGO, regs_show, NULL);
 
 static ssize_t vrcom_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -321,6 +346,7 @@ static struct attribute *sy7636a_sysfs_attrs[] = {
 	&dev_attr_vrcom.attr,
 	&dev_attr_vcom.attr,
 	&dev_attr_vadj.attr,
+	&dev_attr_regs.attr,
 	NULL,
 };
 static const struct attribute_group sy7636a_sysfs_attr_group = {
@@ -380,10 +406,16 @@ static const struct i2c_device_id sy7636a_id_table[] = {
 };
 MODULE_DEVICE_TABLE(i2c, sy7636a_id_table);
 
+static const struct dev_pm_ops sy7636a_pm_ops = {
+	.suspend = sy7636a_vcom_suspend,
+	.resume = sy7636a_vcom_resume,
+};
+
 static struct i2c_driver sy7636a_driver = {
 	.driver	= {
 		.name	= "sy7636a",
 		.of_match_table = of_sy7636a_match_table,
+		.pm = &sy7636a_pm_ops,
 	},
 	.probe = sy7636a_probe,
 	.id_table = sy7636a_id_table,
