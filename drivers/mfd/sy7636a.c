@@ -326,7 +326,7 @@ static ssize_t vadj_store(struct device *dev, struct device_attribute *attr, con
 	if (ret)
 		return ret;
 
-	vcom = sy7636a->vcom;
+	vcom = sy7636a->vcom - sy7636a->vadj;
 	sy7636a->vadj = vadj;
 	sy7636a->vcom = 0;
 
