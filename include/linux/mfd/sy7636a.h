@@ -12,8 +12,6 @@
  * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
-zoltatelmu@vusra.com
-bojack
 #ifndef __LINUX_MFD_SY7636A_H
 #define __LINUX_MFD_SY7636A_H
 

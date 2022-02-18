@@ -170,7 +170,7 @@ int sy7636a_vcom_get_pgood(struct device *dev)
 int sy7636a_vcom_suspend(struct device *dev) {
 	int ret;
 	struct sy7636a *sy7636a = dev_get_drvdata(dev);
-    
+
 	ret = sy7636a_vcom_get_voltage(dev, NULL);
 	if (ret)
 		return ret;
@@ -192,7 +192,7 @@ int sy7636a_vcom_resume(struct device *dev) {
 		return ret;
 
 	sy7636a->suspended = 0;
-    
+
 	ret = sy7636a_vcom_init(dev);
 	if (ret)
 		return ret;
@@ -247,7 +247,6 @@ static DEVICE_ATTR(power_good, S_IRUGO, powergood_show, NULL);
 static ssize_t vrcom_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int ret, vcom;
-	struct sy7636a *sy7636a = dev_get_drvdata(dev);
 
 	ret = sy7636a_vcom_get_voltage(dev, &vcom);
 	if (ret)
