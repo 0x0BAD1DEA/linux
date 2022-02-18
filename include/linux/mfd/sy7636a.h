@@ -12,7 +12,8 @@
  * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
-
+zoltatelmu@vusra.com
+bojack
 #ifndef __LINUX_MFD_SY7636A_H
 #define __LINUX_MFD_SY7636A_H
 
@@ -35,7 +36,7 @@
 #define SY7636A_REG_VCOM_ADJUST_CTRL_MASK 0x01ff
 #define SY7636A_REG_VCOM_ADJUST_CTRL_SHIFT 8
 #define SY7636A_REG_VCOM_ADJUST_CTRL_SCAL 10000
-#define SY7636A_REG_VCOM_MIN -2500000
+#define SY7636A_REG_VCOM_MIN -5000000
 #define SY7636A_REG_VCOM_MAX 0
 
 #define SY7636A_REG_MAX 0x08
@@ -44,13 +45,14 @@ struct sy7636a {
 	struct device *dev;
 	struct regmap *regmap;
 	int vcom;
+	int vadj;
 	struct gpio_desc *pgood_gpio;
-    char suspended;
+	char suspended;
 };
 
-int sy7636a_get_vcom_voltage(struct device *dev, int *val);
-int sy7636a_set_vcom_voltage(struct device *dev, int val);
-int sy7636a_get_vcom_pgood(struct device *dev);
+int sy7636a_vcom_get_voltage(struct device *dev, int *val);
+int sy7636a_vcom_set_voltage(struct device *dev, int val);
+int sy7636a_vcom_get_pgood(struct device *dev);
 int sy7636a_vcom_suspend(struct device *dev);
 int sy7636a_vcom_resume(struct device *dev);
 

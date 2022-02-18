@@ -27,8 +27,8 @@
 
 #include <linux/mfd/sy7636a.h>
 
-static int vcom_adj = 0;
-module_param(vcom_adj, int, 0644);
+static int vadj_init = 0;
+module_param(vadj_init, int, 0644);
 
 static const struct regmap_config sy7636a_regmap_config = {
 	.reg_bits = 8,
@@ -46,6 +46,13 @@ static const struct of_device_id of_sy7636a_match_table[] = {
 	{}
 };
 MODULE_DEVICE_TABLE(of, of_sy7636a_match_table);
+
+static const char *pgood[] = {
+	"REG=OFF, GPIO=OFF",
+	"REG=ON, GPIO=OFF",
+	"REG=OFF, GPIO=ON",
+	"REG=ON, GPIO=ON"
+};
 
 static const char *states[] = {
 	"no fault event",
@@ -68,7 +75,13 @@ static const char *states[] = {
 
 
 // Start of VCOM functions
-int sy7636a_get_vcom_voltage(struct device *dev, int *val)
+int sy7636a_vcom_init(struct device *dev)
+{
+	struct sy7636a *sy7636a = dev_get_drvdata(dev->parent);
+
+	return regmap_write(sy7636a->regmap, SY7636A_REG_POWER_ON_DELAY_TIME, 0x00);
+}
+int sy7636a_vcom_get_voltage(struct device *dev, int *val)
 {
 	int ret;
 	unsigned int val, val_h;
@@ -87,7 +100,7 @@ int sy7636a_get_vcom_voltage(struct device *dev, int *val)
 
 	// If this is a new value, apply a shift described by vcom_adj.
 	if (sy7636a->vcom != vcom && sy7636a->suspended != 1) {
-		if (sy7636a_set_vcom_voltage(dev, vcom) != 0) {
+		if (sy7636a_vcom_set_voltage(dev, vcom) != 0) {
 			sy7636a->vcom = vcom;
 		}
 		sy7636a->vcom = vcom;
@@ -98,7 +111,7 @@ int sy7636a_get_vcom_voltage(struct device *dev, int *val)
 
 	return 0;
 }
-int sy7636a_set_vcom_voltage(struct device *dev, int val)
+int sy7636a_vcom_set_voltage(struct device *dev, int val)
 {
 	int ret;
 	unsigned int rval;
@@ -124,7 +137,7 @@ int sy7636a_set_vcom_voltage(struct device *dev, int val)
 
 	return 0;
 }
-int sy7636a_get_vcom_pgood(struct device *dev)
+int sy7636a_vcom_get_pgood(struct device *dev)
 {
 	int ret;
 	struct sy7636a *sy7636a = dev_get_drvdata(dev);
@@ -158,13 +171,13 @@ int sy7636a_vcom_suspend(struct device *dev) {
 	int ret;
 	struct sy7636a *sy7636a = dev_get_drvdata(dev);
     
-	ret = sy7636a_get_vcom_voltage(dev, NULL);
+	ret = sy7636a_vcom_get_voltage(dev, NULL);
 	if (ret)
 		return ret;
 
 	sy7636a->suspended = 1;
 
-	ret = sy7636a_set_vcom_voltage(dev, 0x00); // FIXME: Get the datasheet to find out how to properly suspend the entire device.
+	ret = sy7636a_vcom_set_voltage(dev, 0x00); // FIXME: Get the datasheet to find out how to properly suspend the entire device.
 	if (ret)
 		return ret;
 
@@ -174,11 +187,15 @@ int sy7636a_vcom_resume(struct device *dev) {
 	int ret, vcom;
 	struct sy7636a *sy7636a = dev_get_drvdata(dev);
     
-	ret = sy7636a_set_vcom_voltage(dev, sy7636a->vcom);
+	ret = sy7636a_vcom_set_voltage(dev, sy7636a->vcom);
 	if (ret)
 		return ret;
 
 	sy7636a->suspended = 0;
+    
+	ret = sy7636a_vcom_init(dev);
+	if (ret)
+		return ret;
 
 	return 0;
 }
@@ -221,45 +238,87 @@ static ssize_t powergood_show(struct device *dev, struct device_attribute *attr,
 	}
 
 	val &= 0x01;
+	val |= gpiod_get_value(sy7636a->pgood_gpio) ? 0x02 : 0x00;
 
-	return snprintf(buf, PAGE_SIZE, "%s\n", val ? "ON" : "OFF");
+	return snprintf(buf, PAGE_SIZE, "%s\n", pgood[val]);
 }
 static DEVICE_ATTR(power_good, S_IRUGO, powergood_show, NULL);
 
-static ssize_t vcom_show(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t vrcom_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int ret, vcom;
+	struct sy7636a *sy7636a = dev_get_drvdata(dev);
 
-	ret = sy7636a_get_vcom_voltage(dev, &vcom);
+	ret = sy7636a_vcom_get_voltage(dev, &vcom);
 	if (ret)
 		return ret;
 
-	return snprintf(buf, PAGE_SIZE, "%d\n", vcom);
+	return snprintf(buf, PAGE_SIZE, "%d\n", vcom - sy7636a->vadj);
 }
-static ssize_t vcom_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t vrcom_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
-	int ret;
-	int vcom;
+	int ret, vcom;
 
 	ret = kstrtoint(buf, 0, &vcom);
 	if (ret)
 		return ret;
 
-	if (vcom < SY7636A_REG_VCOM_MIN || vcom > SY7636A_REG_VCOM_MAX)
-		return -EINVAL;
-
-	ret = sy7636a_set_vcom_voltage(dev, vcom);
+	ret = sy7636a_vcom_set_voltage(dev, vcom);
 	if (ret)
 		return ret;
 
 	return count;
 }
-static DEVICE_ATTR(vcom, S_IRUGO | S_IWUSR, vcom_show, vcom_store);
+static DEVICE_ATTR(vrcom, S_IRUGO | S_IWUSR, vrcom_show, vrcom_store);
+
+static ssize_t vcom_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int ret, vcom;
+
+	ret = sy7636a_vcom_get_voltage(dev, &vcom);
+	if (ret)
+		return ret;
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", vcom);
+}
+static DEVICE_ATTR(vcom, S_IRUGO, vcom_show);
+
+static ssize_t vadj_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int ret, vcom;
+	struct sy7636a *sy7636a = dev_get_drvdata(dev);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", sy7636a->vadj);
+}
+static ssize_t vadj_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	int ret, vadj;
+	struct sy7636a *sy7636a = dev_get_drvdata(dev);
+
+	ret = kstrtoint(buf, 0, &vadj);
+	if (ret)
+		return ret;
+
+	vcom = sy7636a->vcom;
+	sy7636a->vadj = vadj;
+	sy7636a->vcom = 0;
+
+	ret = sy7636a_vcom_set_voltage(dev, vcom);
+	if (ret) {
+		sy7636a->vcom = vcom;
+		return ret;
+	}
+
+	return count;
+}
+static DEVICE_ATTR(vadj, S_IRUGO | S_IWUSR, vadj_show, vadj_store);
 
 static struct attribute *sy7636a_sysfs_attrs[] = {
 	&dev_attr_state.attr,
 	&dev_attr_power_good.attr,
+	&dev_attr_vrcom.attr,
 	&dev_attr_vcom.attr,
+	&dev_attr_vadj.attr,
 	NULL,
 };
 static const struct attribute_group sy7636a_sysfs_attr_group = {
@@ -278,6 +337,13 @@ static int sy7636a_probe(struct i2c_client *client, const struct i2c_device_id *
 		return -ENOMEM;
 
 	sy7636a->dev = &client->dev;
+
+	ret = sy7636a_vcom_init(sy7636a);
+	if (ret) {
+		dev_err(sy7636a->dev, "Failed to initialize regulator: %d\n", ret);
+		return ret;
+	}
+	sy7636a->vadj = vadj_init;
 
 	gdp = devm_gpiod_get(sy7636a->dev, "epd-pwr-good", GPIOD_IN);
 	if (IS_ERR(gdp)) {

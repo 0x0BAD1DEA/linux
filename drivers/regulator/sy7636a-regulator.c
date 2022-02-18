@@ -25,7 +25,7 @@ static int sy7636a_regulator_get_voltage(struct regulator_dev *rdev)
 {
 	int ret, vcom;
 
-	ret = sy7636a_get_vcom_voltage(rdev->regmap, &vcom);
+	ret = sy7636a_vcom_get_voltage(rdev->regmap, &vcom);
 	if (ret)
 		return ret;
 
@@ -50,18 +50,11 @@ static int sy7636a_regulator_enable(struct regulator_dev *rdev)
 	if (ret)
 		return ret;
 
-	ret = sy7636a_get_powergood(rdev->dev.parent);
+	ret = sy7636a_vcom_get_powergood(rdev->dev.parent);
 	if (ret)
 		return ret;
 
 	return 0;
-}
-
-static int sy7636a_regulator_init(struct device *dev)
-{
-	struct sy7636a *sy7636a = dev_get_drvdata(dev->parent);
-
-	return regmap_write(sy7636a->regmap, SY7636A_REG_POWER_ON_DELAY_TIME, 0x00);
 }
 
 static int sy7636a_regulator_suspend(struct device *dev)
@@ -71,13 +64,7 @@ static int sy7636a_regulator_suspend(struct device *dev)
 
 static int sy7636a_regulator_resume(struct device *dev)
 {
-	int ret;
-
-	ret = sy7636a_vcom_resume(dev);
-	if (ret)
-		return ret;
-
-	return sy7636a_regulator_init(dev);
+	return sy7636a_vcom_resume(dev);
 }
 
 static int sy7636a_regulator_probe(struct platform_device *pdev)
@@ -91,12 +78,6 @@ static int sy7636a_regulator_probe(struct platform_device *pdev)
 		return -EPROBE_DEFER;
 
 	platform_set_drvdata(pdev, sy7636a);
-
-	ret = sy7636a_regulator_init(sy7636a);
-	if (ret) {
-		dev_err(sy7636a->dev, "Failed to initialize regulator: %d\n", ret);
-		return ret;
-	}
 
 	config.dev = &pdev->dev;
 	config.dev->of_node = sy7636a->dev->of_node;
