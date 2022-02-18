@@ -92,6 +92,7 @@ int sy7636a_vcom_get_voltage(struct device *dev, int *value)
 	val |= (val_h << 8);
 
 	vcom = -(val & SY7636A_REG_VCOM_ADJUST_CTRL_MASK) * SY7636A_REG_VCOM_ADJUST_CTRL_SCAL;
+	dev_info(sy7636a->dev, "SY7636a: vcom_get: Raw vcom is %d\n", vcom);
 
 	// If this is a new value, apply a shift described by vcom_adj.
 	if (sy7636a->vcom != vcom && sy7636a->suspended != 1) {
@@ -112,15 +113,15 @@ int sy7636a_vcom_set_voltage(struct device *dev, int value)
 	unsigned int rval;
 	struct sy7636a *sy7636a = dev_get_drvdata(dev);
 
-dev_info(sy7636a->dev, "SY7636a: vcom_set: Trying to set %d\n", value);
+	dev_info(sy7636a->dev, "SY7636a: vcom_set: Trying to set %d\n", value);
 
 	if (sy7636a->vcom != value && sy7636a->suspended != 1) {
 		value = value + sy7636a->vadj;
-dev_info(sy7636a->dev, "SY7636a: vcom_set: Adjusting by %d. Now setting %d\n", sy7636a->vadj, value);
+		dev_info(sy7636a->dev, "SY7636a: vcom_set: Adjusting by %d. Now setting %d\n", sy7636a->vadj, value);
 	}
 
 	if (value < SY7636A_REG_VCOM_MIN || value > SY7636A_REG_VCOM_MAX) {
-dev_info(sy7636a->dev, "SY7636a: vcom_set: Voltage error!\n");
+		dev_info(sy7636a->dev, "SY7636a: vcom_set: Voltage error!\n");
 		return -EINVAL;
     }
 
@@ -145,6 +146,9 @@ int sy7636a_vcom_get_pgood(struct device *dev)
 	const unsigned int wait_time = 500;
 	unsigned int wait_cnt;
 
+	if (!sy7636a->pgood_gpio)
+		return -EINVAL;
+    
 	t0 = jiffies;
 	for (wait_cnt = 0; wait_cnt < wait_time; wait_cnt++) {
 		pwr_good = gpiod_get_value_cansleep(sy7636a->pgood_gpio);
@@ -327,7 +331,6 @@ static const struct attribute_group sy7636a_sysfs_attr_group = {
 static int sy7636a_probe(struct i2c_client *client, const struct i2c_device_id *ids)
 {
 	struct sy7636a *sy7636a;
-	struct gpio_desc *gdp;
 	int ret;
 
 	sy7636a = devm_kzalloc(&client->dev, sizeof(struct sy7636a), GFP_KERNEL);
@@ -335,20 +338,10 @@ static int sy7636a_probe(struct i2c_client *client, const struct i2c_device_id *
 		return -ENOMEM;
 
 	sy7636a->dev = &client->dev;
-
-	ret = sy7636a_vcom_init(sy7636a);
-	if (ret) {
-		dev_err(sy7636a->dev, "Failed to initialize regulator: %d\n", ret);
-		return ret;
-	}
-
-	gdp = devm_gpiod_get(sy7636a->dev, "epd-pwr-good", GPIOD_IN);
-	if (IS_ERR(gdp)) {
-		dev_err(sy7636a->dev, "Power good GPIO fault %ld\n", PTR_ERR(gdp));
-		return PTR_ERR(gdp);
-	}
-	sy7636a->pgood_gpio = gdp;
-	dev_info(sy7636a->dev, "Power good GPIO registered (gpio# %d)\n", desc_to_gpio(sy7636a->pgood_gpio));
+	sy7636a->suspended = 0;
+	sy7636a->vcom = 0;
+	sy7636a->vadj = 0;
+    sy7636a->pgood_gpio = NULL;
 
 	sy7636a->regmap = devm_regmap_init_i2c(client, &sy7636a_regmap_config);
 	if (IS_ERR(sy7636a->regmap)) {
@@ -362,6 +355,12 @@ static int sy7636a_probe(struct i2c_client *client, const struct i2c_device_id *
 	ret = sysfs_create_group(&client->dev.kobj, &sy7636a_sysfs_attr_group);
 	if (ret) {
 		dev_err(sy7636a->dev, "Failed to create sysfs attributes\n");
+		return ret;
+	}
+
+	ret = sy7636a_vcom_init(sy7636a);
+	if (ret) {
+		dev_err(sy7636a->dev, "Failed to initialize regulator: %d\n", ret);
 		return ret;
 	}
 

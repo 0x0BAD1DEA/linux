@@ -18,6 +18,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
+#include <linux/gpio/consumer.h>
 
 #include <linux/mfd/sy7636a.h>
 
@@ -25,7 +26,7 @@ static int sy7636a_regulator_get_voltage(struct regulator_dev *rdev)
 {
 	int ret, vcom;
 
-	ret = sy7636a_vcom_get_voltage(&rdev->dev, &vcom);
+	ret = sy7636a_vcom_get_voltage(rdev->dev.parent, &vcom);
 	if (ret)
 		return ret;
 
@@ -67,35 +68,6 @@ static int sy7636a_regulator_resume(struct device *dev)
 	return sy7636a_vcom_resume(dev);
 }
 
-static ssize_t vadj_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct sy7636a *sy7636a = dev_get_drvdata(dev);
-
-	return snprintf(buf, PAGE_SIZE, "%d\n", sy7636a->vadj);
-}
-static ssize_t vadj_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	int ret, vadj, vcom;
-	struct sy7636a *sy7636a = dev_get_drvdata(dev);
-
-	ret = kstrtoint(buf, 0, &vadj);
-	if (ret)
-		return ret;
-
-	vcom = sy7636a->vcom;
-	sy7636a->vadj = vadj;
-	sy7636a->vcom = 0;
-
-	ret = sy7636a_vcom_set_voltage(dev, vcom);
-	if (ret) {
-		sy7636a->vcom = vcom;
-		return ret;
-	}
-
-	return count;
-}
-static DEVICE_ATTR(vadj, S_IRUGO | S_IWUSR, vadj_show, vadj_store);
-
 static const struct regulator_ops sy7636a_vcom_volt_ops = {
 	.get_voltage = sy7636a_regulator_get_voltage,
 	.enable = sy7636a_regulator_enable,
@@ -117,21 +89,23 @@ struct regulator_desc desc = {
 
 static int sy7636a_regulator_probe(struct platform_device *pdev)
 {
-	int ret;
 	struct sy7636a *sy7636a = dev_get_drvdata(pdev->dev.parent);
 	struct regulator_config config = { };
 	struct regulator_dev *rdev;
+	struct gpio_desc *gdp;
 
 	if (!sy7636a)
 		return -EPROBE_DEFER;
 
 	platform_set_drvdata(pdev, sy7636a);
 
-	ret = sysfs_create_file(&pdev->dev.kobj, &dev_attr_vadj.attr);
-	if (ret) {
-		dev_err(sy7636a->dev, "Failed to create sysfs attributes\n");
-		return ret;
+	gdp = devm_gpiod_get(sy7636a->dev, "epd-pwr-good", GPIOD_IN);
+	if (IS_ERR(gdp)) {
+		dev_err(sy7636a->dev, "Power good GPIO fault %ld\n", PTR_ERR(gdp));
+		return PTR_ERR(gdp);
 	}
+	sy7636a->pgood_gpio = gdp;
+	dev_info(sy7636a->dev, "Power good GPIO registered (gpio# %d)\n", desc_to_gpio(sy7636a->pgood_gpio));
 
 	config.dev = &pdev->dev;
 	config.dev->of_node = sy7636a->dev->of_node;

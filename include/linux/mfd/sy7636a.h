@@ -43,8 +43,8 @@ struct sy7636a {
 	struct device *dev;
 	struct regmap *regmap;
 	int vcom;
-	int vadj;
 	struct gpio_desc *pgood_gpio;
+	int vadj;
 	char suspended;
 };
 
