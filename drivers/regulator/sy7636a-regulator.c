@@ -25,7 +25,7 @@ static int sy7636a_regulator_get_voltage(struct regulator_dev *rdev)
 {
 	int ret, vcom;
 
-	ret = sy7636a_vcom_get_voltage(rdev->regmap, &vcom);
+	ret = sy7636a_vcom_get_voltage(&rdev->dev, &vcom);
 	if (ret)
 		return ret;
 
@@ -44,13 +44,13 @@ static int sy7636a_regulator_disable(struct regulator_dev *rdev)
 
 static int sy7636a_regulator_enable(struct regulator_dev *rdev)
 {
-	struct sy7636a *sy7636a = dev_get_drvdata(rdev->dev.parent);
+	int ret;
 
 	ret = regulator_enable_regmap(rdev);
 	if (ret)
 		return ret;
 
-	ret = sy7636a_vcom_get_powergood(rdev->dev.parent);
+	ret = sy7636a_vcom_get_pgood(rdev->dev.parent);
 	if (ret)
 		return ret;
 
@@ -67,31 +67,34 @@ static int sy7636a_regulator_resume(struct device *dev)
 	return sy7636a_vcom_resume(dev);
 }
 
-static int sy7636a_regulator_probe(struct platform_device *pdev)
+static ssize_t vadj_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	int ret;
-	struct sy7636a *sy7636a = dev_get_drvdata(pdev->dev.parent);
-	struct regulator_config config = { };
-	struct regulator_dev *rdev;
+	struct sy7636a *sy7636a = dev_get_drvdata(dev);
 
-	if (!sy7636a)
-		return -EPROBE_DEFER;
+	return snprintf(buf, PAGE_SIZE, "%d\n", sy7636a->vadj);
+}
+static ssize_t vadj_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	int ret, vadj, vcom;
+	struct sy7636a *sy7636a = dev_get_drvdata(dev);
 
-	platform_set_drvdata(pdev, sy7636a);
+	ret = kstrtoint(buf, 0, &vadj);
+	if (ret)
+		return ret;
 
-	config.dev = &pdev->dev;
-	config.dev->of_node = sy7636a->dev->of_node;
-	config.driver_data = sy7636a;
-	config.regmap = sy7636a->regmap;
+	vcom = sy7636a->vcom;
+	sy7636a->vadj = vadj;
+	sy7636a->vcom = 0;
 
-	rdev = devm_regulator_register(&pdev->dev, &desc, &config);
-	if (IS_ERR(rdev)) {
-		dev_err(sy7636a->dev, "Failed to register %s regulator\n", pdev->name);
-		return PTR_ERR(rdev);
+	ret = sy7636a_vcom_set_voltage(dev, vcom);
+	if (ret) {
+		sy7636a->vcom = vcom;
+		return ret;
 	}
 
-	return 0;
+	return count;
 }
+static DEVICE_ATTR(vadj, S_IRUGO | S_IWUSR, vadj_show, vadj_store);
 
 static const struct regulator_ops sy7636a_vcom_volt_ops = {
 	.get_voltage = sy7636a_regulator_get_voltage,
@@ -111,6 +114,38 @@ struct regulator_desc desc = {
 	.regulators_node = of_match_ptr("regulators"),
 	.of_match = of_match_ptr("vcom"),
 };
+
+static int sy7636a_regulator_probe(struct platform_device *pdev)
+{
+	int ret;
+	struct sy7636a *sy7636a = dev_get_drvdata(pdev->dev.parent);
+	struct regulator_config config = { };
+	struct regulator_dev *rdev;
+
+	if (!sy7636a)
+		return -EPROBE_DEFER;
+
+	platform_set_drvdata(pdev, sy7636a);
+
+	ret = sysfs_create_file(&pdev->dev.kobj, &dev_attr_vadj.attr);
+	if (ret) {
+		dev_err(sy7636a->dev, "Failed to create sysfs attributes\n");
+		return ret;
+	}
+
+	config.dev = &pdev->dev;
+	config.dev->of_node = sy7636a->dev->of_node;
+	config.driver_data = sy7636a;
+	config.regmap = sy7636a->regmap;
+
+	rdev = devm_regulator_register(&pdev->dev, &desc, &config);
+	if (IS_ERR(rdev)) {
+		dev_err(sy7636a->dev, "Failed to register %s regulator\n", pdev->name);
+		return PTR_ERR(rdev);
+	}
+
+	return 0;
+}
 
 static const struct platform_device_id sy7636a_regulator_id_table[] = {
 	{ "sy7636a-regulator", },
